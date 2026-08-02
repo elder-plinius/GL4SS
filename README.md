@@ -112,10 +112,11 @@ npm install
 npm run dev
 ```
 
-Bring your own [OpenRouter](https://openrouter.ai) key. It lives in **your** browser and goes **only** to
-OpenRouter — a strict CSP pins `connect-src` so a compromised dependency has nowhere to ship it. Settings
-has a **test this key** button that checks it against OpenRouter for free and reports your remaining
-balance, so you find out a key is wrong *before* spending a lever pull discovering it.
+Bring your own [OpenRouter](https://openrouter.ai) or [Venice](https://venice.ai) key. Pick the provider in
+Settings; each key lives in **your** browser and is sent **only** to the provider it belongs to. A strict
+CSP pins `connect-src` to those two API origins, and code-level origin checks keep credentials off
+model-supplied download URLs. Settings has a **test this key** button that validates the active provider
+for free and reports its available balance, so you find out a key is wrong *before* spending a lever pull.
 
 | stage | default | swappable |
 | --- | --- | --- |
@@ -124,8 +125,9 @@ balance, so you find out a key is wrong *before* spending a lever pull discoveri
 | 🎬 film + sound | `bytedance/seedance-2.0` | **5 models** — Seedance Fast, Grok Imagine, Veo 3.1, Kling 3.0 |
 | 🌍 map | Leaflet + Esri World Imagery, zoom all the way out and it becomes a globe | — |
 
-Everything is picked in **Settings**, in plain language, with what each one is actually *for*. Fast where
-you're stepping through time, frontier-grade where you've stopped to look.
+Everything is picked in **Settings**, including the provider, in plain language, with what each model is
+actually *for*. OpenRouter keeps the defaults above; Venice offers its own curated text, still, and film
+models, including Grok Imagine for fast private stills and film.
 
 When something does go wrong, the app says which of the five things it was — no key, wrong key, no credit,
 too fast, model retired — in a sentence, with the one button that fixes it. It only offers you a retry when

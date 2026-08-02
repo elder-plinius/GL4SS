@@ -1,3 +1,5 @@
+import type { ProviderId } from './provider';
+
 /**
  * WHAT WENT WRONG, IN WORDS.
  *
@@ -64,10 +66,16 @@ function statusOf(err: unknown): number | undefined {
   return undefined;
 }
 
-export function explainFailure(err: unknown): Failure {
+export function explainFailure(err: unknown, provider: ProviderId = 'openrouter'): Failure {
   const status = statusOf(err);
   const raw = rawMessage(err);
   const lower = raw.toLowerCase();
+  const name = provider === 'venice' ? 'Venice' : 'OpenRouter';
+  const host = provider === 'venice' ? 'api.venice.ai' : 'openrouter.ai';
+  const keysUrl =
+    provider === 'venice' ? 'https://venice.ai/settings/api' : 'https://openrouter.ai/keys';
+  const creditsUrl =
+    provider === 'venice' ? 'https://venice.ai/settings/api' : 'https://openrouter.ai/credits';
 
   // A fetch that never reached a server throws TypeError with no status. This is
   // the offline case, and it is the one where telling the user to check their
@@ -75,9 +83,9 @@ export function explainFailure(err: unknown): Failure {
   if (status === undefined && err instanceof TypeError) {
     return {
       kind: 'offline',
-      title: 'Could not reach OpenRouter.',
+      title: `Could not reach ${name}.`,
       detail:
-        'The request never left the building — check your connection. If you are online, a VPN, an ad blocker or a corporate proxy may be blocking openrouter.ai.',
+        `The request never left the building — check your connection. If you are online, a VPN, an ad blocker or a corporate proxy may be blocking ${host}.`,
       retry: true,
     };
   }
@@ -92,24 +100,52 @@ export function explainFailure(err: unknown): Failure {
     };
   }
 
+  if (
+    provider === 'venice' &&
+    status === 401 &&
+    /PRO_ONLY_MODEL|only available to pro users/i.test(raw)
+  ) {
+    return {
+      kind: 'no-model',
+      title: 'That Venice model needs a Pro account.',
+      detail:
+        'Your key may be valid, but this model is restricted to Venice Pro. Pick a different model in Settings or upgrade the account.',
+      retry: false,
+      action: { label: 'open settings', openSettings: true },
+    };
+  }
+
+  if (provider === 'venice' && status === 422) {
+    return {
+      kind: 'moderation',
+      title: 'The provider refused this scene.',
+      detail:
+        'The selected model rejected the scene under its content policy. Try another style or choose a different model in Settings.',
+      retry: false,
+      action: { label: 'open settings', openSettings: true },
+    };
+  }
+
   switch (status) {
     case 401:
       return {
         kind: 'bad-key',
         title: 'That key was rejected.',
         detail:
-          'OpenRouter did not recognise it. Keys start with sk-or-v1- — an OpenAI or Anthropic key will not work here. Paste it again, or make a new one.',
+          provider === 'venice'
+            ? 'Venice did not recognise it. Paste the Venice API key again, or make a new one.'
+            : 'OpenRouter did not recognise it. Keys start with sk-or-v1- — an OpenAI or Anthropic key will not work here. Paste it again, or make a new one.',
         retry: false,
-        action: { label: 'get a key ↗', href: 'https://openrouter.ai/keys' },
+        action: { label: 'get a key ↗', href: keysUrl },
       };
     case 402:
       return {
         kind: 'no-credit',
-        title: 'Your OpenRouter account is out of credit.',
+        title: `Your ${name} account is out of credit.`,
         detail:
           'The key is valid, there is just nothing left on it. Image and video models are paid — add credit and the same pull will work.',
         retry: false,
-        action: { label: 'add credit ↗', href: 'https://openrouter.ai/credits' },
+        action: { label: 'add credit ↗', href: creditsUrl },
       };
     case 403:
       if (lower.includes('moderat') || lower.includes('flag') || lower.includes('safety')) {
@@ -127,14 +163,14 @@ export function explainFailure(err: unknown): Failure {
         detail:
           'The key exists but lacks permission for this model — often a key scoped to specific models, or one restricted by your region.',
         retry: false,
-        action: { label: 'check your key ↗', href: 'https://openrouter.ai/keys' },
+        action: { label: 'check your key ↗', href: keysUrl },
       };
     case 404:
       return {
         kind: 'no-model',
         title: 'That model is no longer available.',
         detail:
-          'OpenRouter has no endpoint for the selected model — providers retire preview models without notice. Pick a different one in Settings.',
+          `${name} has no endpoint for the selected model — providers retire preview models without notice. Pick a different one in Settings.`,
         retry: false,
         action: { label: 'open settings', openSettings: true },
       };
@@ -151,7 +187,7 @@ export function explainFailure(err: unknown): Failure {
         kind: 'rate-limit',
         title: 'Too many requests, too quickly.',
         detail:
-          'OpenRouter is throttling this key. Wait a few seconds and pull again. If it keeps happening, free-tier keys have much tighter limits than credited ones.',
+          `${name} is throttling this key. Wait a few seconds and pull again. If it keeps happening, account rate limits may need time to reset.`,
         retry: true,
       };
     case 413:
@@ -168,7 +204,7 @@ export function explainFailure(err: unknown): Failure {
     return {
       kind: 'provider',
       title: 'The provider is having a bad day.',
-      detail: `OpenRouter returned ${status}. Nothing is wrong on your side — wait a moment and pull again, or switch models in Settings.`,
+      detail: `${name} returned ${status}. Nothing is wrong on your side — wait a moment and pull again, or switch models in Settings.`,
       retry: true,
     };
   }

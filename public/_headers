@@ -1,6 +1,6 @@
 # Cloudflare Pages / Netlify header rules. Copied verbatim into the build output.
 #
-# This app holds an OpenRouter API key in localStorage and talks to the provider
+# This app holds a provider API key in localStorage and talks to the provider
 # straight from the browser, so `connect-src` is the load-bearing line: it is what
 # stops any injected script from posting that key to an attacker's endpoint. Keep
 # it as narrow as the app actually needs.
@@ -21,7 +21,7 @@
   # 'self' and every clip is refused — a failure that appears ONLY in production,
   # since neither `vite dev` nor `vite preview` applies this file, and after the
   # visitor has already paid for a several-minute render.
-  Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob: https:; media-src 'self' blob: https:; connect-src 'self' https://openrouter.ai https://nominatim.openstreetmap.org; frame-ancestors 'none'; base-uri 'self'; form-action 'none'; object-src 'none'
+  Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob: https:; media-src 'self' blob: https:; connect-src 'self' https://openrouter.ai https://api.venice.ai https://nominatim.openstreetmap.org; frame-ancestors 'none'; base-uri 'self'; form-action 'none'; object-src 'none'
 
 # Vite fingerprints every asset filename, so these can never go stale.
 /assets/*

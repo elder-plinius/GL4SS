@@ -1,8 +1,8 @@
 {
   // Cloudflare Workers deployment config.
   //
-  // This app has no server: it is a static bundle that talks to OpenRouter
-  // directly from the browser. So there is no `main` entry point here — this is
+  // This app has no server: it is a static bundle that talks to OpenRouter or
+  // Venice directly from the browser. So there is no `main` entry point here — this is
   // an assets-only Worker, which Cloudflare supports natively and which is the
   // successor to the old Pages flow.
   //
