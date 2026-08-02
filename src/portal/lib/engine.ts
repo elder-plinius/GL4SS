@@ -24,15 +24,15 @@
  */
 
 import type { Coordinates } from '../../types';
+import { imageModelForMode } from '../../lib/openrouter';
 import {
-  generateImage,
-  generateImageWithFallback,
-  generateSceneDirection,
-  generateVideoBlocking,
-  imageModelForMode,
-  isSourceFrameRejection,
-} from '../../lib/openrouter';
-import type { ModelSelection } from '../../lib/openrouter';
+  generateProviderImage,
+  generateProviderImageWithFallback,
+  generateProviderSceneDirection,
+  generateProviderVideoBlocking,
+  isProviderSourceFrameRejection,
+} from '../../lib/provider';
+import type { ProviderConfig, ProviderId } from '../../lib/provider';
 import { explainFailure } from '../../lib/failure';
 import type { Failure } from '../../lib/failure';
 import { findPhase, isDefaultPhase } from './daylight';
@@ -157,10 +157,7 @@ interface Job {
 
 const MAX_CACHED_SCENES = 48;
 
-export interface EngineConfig {
-  apiKey: string;
-  models: ModelSelection;
-}
+export type EngineConfig = ProviderConfig;
 
 export class SceneEngine {
   private scenes = new Map<string, Scene>();
@@ -248,7 +245,8 @@ export class SceneEngine {
   }
 
   setConfig(config: EngineConfig): void {
-    const keyChanged = config.apiKey !== this.config.apiKey;
+    const keyChanged =
+      config.apiKey !== this.config.apiKey || config.provider !== this.config.provider;
     this.config = config;
     // A new key can rescue everything that failed for auth reasons.
     if (keyChanged) {
@@ -544,6 +542,7 @@ export class SceneEngine {
     // Evicted mid-render, the success patch became a silent no-op, a fully paid
     // clip vanished with no error, and the station re-armed for a second charge.
     this.filming.add(key);
+    const config = this.config;
     this.patch(key, {
       videoStatus: 'rendering',
       videoStage: 'submitting',
@@ -565,10 +564,10 @@ export class SceneEngine {
     );
 
     const run = (withSource: boolean) =>
-      generateVideoBlocking(
-        this.config.apiKey,
+      generateProviderVideoBlocking(
+        config,
         {
-          model: this.config.models.cinematic,
+          model: withSource ? config.models.cinematic : config.models.cinematicText,
           prompt,
           duration: seconds,
           resolution: '720p',
@@ -604,7 +603,7 @@ export class SceneEngine {
         // this is the common path — losing continuity with the still beats
         // losing the film. Anything that is NOT a frame rejection is a real
         // failure and must not be retried into a second charge.
-        if (!scene.heroUrl || !isSourceFrameRejection(err)) throw err;
+        if (!scene.heroUrl || !isProviderSourceFrameRejection(config.provider, err)) throw err;
         continuous = false;
         this.patch(key, { videoStage: 'the still was refused as a source — rendering fresh' });
         url = await run(false);
@@ -618,7 +617,7 @@ export class SceneEngine {
     } catch (err) {
       this.patch(key, {
         videoStatus: 'error',
-        videoError: describe(err),
+        videoError: describe(err, config.provider),
         videoStage: undefined,
       });
     } finally {
@@ -631,6 +630,7 @@ export class SceneEngine {
     const scene = this.scenes.get(key);
     if (!scene || !scene.direction || scene.wideStatus === 'loading' || scene.wideStatus === 'ready') return;
     this.patch(key, { wideStatus: 'loading' });
+    const config = this.config;
     const prompts = buildImagePromptsFromDirection(
       {
         location: scene.location,
@@ -646,19 +646,19 @@ export class SceneEngine {
       },
       scene.direction,
     );
-    const model = imageModelForMode('wide-field', this.config.models);
+    const model = imageModelForMode('wide-field', config.models);
     try {
       // Left and right only — the centre frame is already the hero.
       const [left, right] = await Promise.all([
-        generateImage(this.config.apiKey, prompts[0]!, model),
-        generateImage(this.config.apiKey, prompts[2]!, model),
+        generateProviderImage(config, prompts[0]!, model),
+        generateProviderImage(config, prompts[2]!, model),
       ]);
       this.patch(key, { wideUrls: [left, right], wideStatus: 'ready' });
     } catch (err) {
       // Its own field, not the shared `error`. Writing a widen failure into
       // `error` put it somewhere the UI never renders for a 'ready' scene, so
       // pressing W and getting nothing was completely silent.
-      this.patch(key, { wideStatus: 'error', wideError: describe(err) });
+      this.patch(key, { wideStatus: 'error', wideError: describe(err, config.provider) });
     }
   }
 
@@ -696,17 +696,17 @@ export class SceneEngine {
 
   private async run(job: Job): Promise<void> {
     const { key, coords } = job;
+    const config = this.config;
 
     try {
       this.patch(key, { status: 'directing' });
 
-      const direction = await generateSceneDirection(
-        this.config.apiKey,
+      const direction = await generateProviderSceneDirection(
+        config,
         coords.location,
         coords.coordinates,
         coords.year,
         'wide-field',
-        this.config.models.text,
         this.styleOverride,
         {
           signal: job.abort.signal,
@@ -750,9 +750,9 @@ export class SceneEngine {
       // focal subject is often the violent one, while the stonemason off to the
       // side renders fine and still belongs to the same moment.
       const candidates = [prompts[1] ?? prompts[0]!, prompts[0]!, prompts[2]!].filter(Boolean);
-      const model = imageModelForMode('wide-field', this.config.models);
-      const { url: heroUrl, moderatedCount, modelUsed } = await generateImageWithFallback(
-        this.config.apiKey,
+      const model = imageModelForMode('wide-field', config.models);
+      const { url: heroUrl, moderatedCount, modelUsed } = await generateProviderImageWithFallback(
+        config,
         candidates,
         model,
         { signal: job.abort.signal },
@@ -785,7 +785,7 @@ export class SceneEngine {
       });
     } catch (err) {
       if (job.abort.signal.aborted) this.discardAborted(key);
-      else this.patch(key, { status: 'error', ...failureOf(err) });
+      else this.patch(key, { status: 'error', ...failureOf(err, config.provider) });
     } finally {
       this.active.delete(key);
       this.pump();
@@ -907,11 +907,11 @@ export class SceneEngine {
  * separately as `errorKind` and rendered by the UI.
  */
 /** Title and classification together, so neither can be recorded without the other. */
-function failureOf(err: unknown): { error: string; failure: Failure } {
-  const f = explainFailure(err);
+function failureOf(err: unknown, provider: ProviderId): { error: string; failure: Failure } {
+  const f = explainFailure(err, provider);
   return { error: f.title, failure: f };
 }
 
-function describe(err: unknown): string {
-  return explainFailure(err).title;
+function describe(err: unknown, provider: ProviderId): string {
+  return explainFailure(err, provider).title;
 }

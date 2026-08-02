@@ -45,6 +45,8 @@ export class ErrorBoundary extends Component<Props, State> {
     }
     try {
       localStorage.removeItem('looking-glass-model-selection');
+      localStorage.removeItem('looking-glass-venice-model-selection');
+      localStorage.removeItem('looking-glass-provider');
       localStorage.removeItem('looking-glass-style');
     } catch {
       /* storage may be blocked; that is survivable */

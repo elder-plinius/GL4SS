@@ -33,6 +33,8 @@ export interface ModelOption {
   id: string;
   label: string;
   blurb: string;
+  /** Text-to-video counterpart when a provider splits film models by input. */
+  textModelId?: string;
 }
 
 // Probed live against OpenRouter 2026-07-30. `google/gemini-3-pro-preview` was
@@ -80,6 +82,8 @@ export interface ModelSelection {
   wideField: string;
   chronoSelfie: string;
   cinematic: string;
+  /** Text-only fallback used when a provider rejects the source frame. */
+  cinematicText: string;
   animate: string;
 }
 
@@ -88,6 +92,7 @@ export const DEFAULT_MODEL_SELECTION: ModelSelection = {
   wideField: DEFAULT_WIDE_FIELD_MODEL,
   chronoSelfie: DEFAULT_CHRONO_SELFIE_MODEL,
   cinematic: DEFAULT_CINEMATIC_VIDEO_MODEL,
+  cinematicText: DEFAULT_CINEMATIC_VIDEO_MODEL,
   animate: DEFAULT_ANIMATE_VIDEO_MODEL,
 };
 
@@ -188,6 +193,10 @@ export interface KeyStatus {
   /** How often the limit resets, e.g. "weekly". Absent on a lifetime cap. */
   resets?: string;
   freeTier: boolean;
+  /** Venice may consume either prepaid USD or DIEM. OpenRouter is always USD. */
+  currency?: 'USD' | 'DIEM';
+  /** Whether the provider reports that the account can currently generate. */
+  canConsume?: boolean;
 }
 
 /**
@@ -397,7 +406,7 @@ Include sensory details: sights, sounds, atmosphere. Keep it to 2-3 sentences. D
 // per-panel image prompts that share atmosphere but have distinct subjects.
 // ============================================================================
 
-function buildSceneDirectionPrompt(
+export function buildSceneDirectionPrompt(
   location: string,
   coordinates: { lat: number; lng: number },
   year: number,
@@ -623,7 +632,7 @@ const SCENE_FIELDS: (keyof SceneDirection)[] = [
   'cinematicSoundCue',
 ];
 
-function parseSceneDirection(raw: string): SceneDirection | null {
+export function parseSceneDirection(raw: string): SceneDirection | null {
   if (!raw) return null;
   // Some models wrap JSON in ```json fences despite instructions — strip.
   const cleaned = raw
@@ -720,6 +729,19 @@ export async function generateSceneDirection(
     { signal: options.signal, timeoutMs: TEXT_TIMEOUT_MS },
   );
   const text = extractTextFromMessage(data.choices?.[0]?.message);
+  return sceneDirectionFromText(text, model, location);
+}
+
+/**
+ * Normalize a provider's text completion into the scene contract. Venice uses
+ * the same OpenAI-compatible message shape but a different transport, so the
+ * expensive prompt/parser/fallback behavior lives in one place.
+ */
+export function sceneDirectionFromText(
+  text: string,
+  model: string,
+  location: string,
+): SceneDirection {
   const parsed = parseSceneDirection(text);
   if (parsed) return parsed;
 

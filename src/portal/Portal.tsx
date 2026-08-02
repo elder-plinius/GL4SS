@@ -37,8 +37,9 @@ import { safeStorage } from './lib/safeStorage';
 import { DAY_PHASES, DEFAULT_PHASE_ID, findPhase } from './lib/daylight';
 import type { JumpCharacter, Pin } from './lib/pin';
 import type { Coordinates } from '../types';
-import { DEFAULT_MODEL_SELECTION } from '../lib/openrouter';
 import type { ModelSelection } from '../lib/openrouter';
+import { defaultModelsFor, videoModelsFor } from '../lib/provider';
+import type { ProviderId } from '../lib/provider';
 import { STYLE_PRESETS, DEFAULT_STYLE_ID, findStyle } from '../lib/styles';
 import {
   DEFAULT_IMAGE_TEMPLATE,
@@ -51,6 +52,9 @@ import { formatYear, getEraBand } from '../lib/format';
 // Same storage keys as v1, so a key already saved there carries straight over.
 const STORAGE_KEY_API = 'looking-glass-openrouter-key';
 const STORAGE_KEY_MODELS = 'looking-glass-model-selection';
+const STORAGE_KEY_PROVIDER = 'looking-glass-provider';
+const STORAGE_KEY_VENICE_API = 'looking-glass-venice-key';
+const STORAGE_KEY_VENICE_MODELS = 'looking-glass-venice-model-selection';
 const STORAGE_KEY_STYLE = 'looking-glass-style';
 const STORAGE_KEY_CUSTOM_STYLE = 'looking-glass-custom-style';
 const STORAGE_KEY_FILM_WARNED = 'looking-glass-film-warned';
@@ -86,13 +90,15 @@ const PREFETCH_RADIUS = 1;
  */
 const PORTAL_WIDE_FIELD_MODEL = 'x-ai/grok-imagine-image-quality';
 
-function loadModels(): ModelSelection {
-  const portalDefaults: ModelSelection = {
-    ...DEFAULT_MODEL_SELECTION,
-    wideField: PORTAL_WIDE_FIELD_MODEL,
-  };
+function loadModels(provider: ProviderId): ModelSelection {
+  const portalDefaults: ModelSelection =
+    provider === 'openrouter'
+      ? { ...defaultModelsFor(provider), wideField: PORTAL_WIDE_FIELD_MODEL }
+      : defaultModelsFor(provider);
   try {
-    const raw = safeStorage.get(STORAGE_KEY_MODELS);
+    const raw = safeStorage.get(
+      provider === 'venice' ? STORAGE_KEY_VENICE_MODELS : STORAGE_KEY_MODELS,
+    );
     if (!raw) return portalDefaults;
     const saved = JSON.parse(raw) as Partial<ModelSelection>;
     // wideField used to be forced back to the portal default here, to stop the
@@ -101,7 +107,19 @@ function loadModels(): ModelSelection {
     // and Settings now has its own picker — so a saved choice is a real choice
     // and is honoured. The fast model remains the DEFAULT, which was the part
     // that actually mattered.
-    return { ...portalDefaults, ...saved };
+    const merged = { ...portalDefaults, ...saved };
+    const selectedVideo = videoModelsFor(provider).find((model) => model.id === merged.cinematic);
+    // A curated provider list can drop a model when its supported durations no
+    // longer match the portal. Do not leave a stale saved ID selected invisibly.
+    if (!selectedVideo) {
+      merged.cinematic = portalDefaults.cinematic;
+      merged.cinematicText = portalDefaults.cinematicText;
+      merged.animate = portalDefaults.animate;
+      return merged;
+    }
+    // Older OpenRouter settings predate the text-only film fallback.
+    if (!saved.cinematicText) merged.cinematicText = selectedVideo.textModelId ?? merged.cinematic;
+    return merged;
   } catch {
     return portalDefaults;
   }
@@ -185,11 +203,31 @@ export function Portal() {
   // reading a ref during render is exactly what it isn't for.
   const [initialUrl] = useState(readUrl);
 
-  const [apiKey, setApiKey] = useState(() => safeStorage.get(STORAGE_KEY_API) ?? '');
-  const [models, setModels] = useState<ModelSelection>(loadModels);
+  const [provider, setProvider] = useState<ProviderId>(() =>
+    safeStorage.get(STORAGE_KEY_PROVIDER) === 'venice' ? 'venice' : 'openrouter',
+  );
+  const [apiKeys, setApiKeys] = useState<Record<ProviderId, string>>(() => ({
+    openrouter: safeStorage.get(STORAGE_KEY_API) ?? '',
+    venice: safeStorage.get(STORAGE_KEY_VENICE_API) ?? '',
+  }));
+  const [modelsByProvider, setModelsByProvider] = useState<Record<ProviderId, ModelSelection>>(
+    () => ({
+      openrouter: loadModels('openrouter'),
+      venice: loadModels('venice'),
+    }),
+  );
+  const apiKey = apiKeys[provider];
+  const models = modelsByProvider[provider];
   const changeModels = useCallback((next: ModelSelection) => {
-    setModels(next);
-    safeStorage.set(STORAGE_KEY_MODELS, JSON.stringify(next));
+    setModelsByProvider((current) => ({ ...current, [provider]: next }));
+    safeStorage.set(
+      provider === 'venice' ? STORAGE_KEY_VENICE_MODELS : STORAGE_KEY_MODELS,
+      JSON.stringify(next),
+    );
+  }, [provider]);
+  const changeProvider = useCallback((next: ProviderId) => {
+    setProvider(next);
+    safeStorage.set(STORAGE_KEY_PROVIDER, next);
   }, []);
   const [styleId, setStyleId] = useState(
     () => initialUrl.style ?? safeStorage.get(STORAGE_KEY_STYLE) ?? DEFAULT_STYLE_ID,
@@ -433,12 +471,12 @@ export function Portal() {
   // any request can fire (the demand effect is declared after this one and is
   // debounced on top of that).
   const [engine] = useState(
-    () => new SceneEngine({ apiKey: '', models: DEFAULT_MODEL_SELECTION }),
+    () => new SceneEngine({ provider: 'openrouter', apiKey: '', models: defaultModelsFor('openrouter') }),
   );
 
   useEffect(() => {
-    engine.setConfig({ apiKey, models });
-  }, [engine, apiKey, models]);
+    engine.setConfig({ provider, apiKey, models });
+  }, [engine, provider, apiKey, models]);
 
   const scenes = useSyncExternalStore(engine.subscribe, engine.getSnapshot);
 
@@ -940,8 +978,8 @@ export function Portal() {
       return;
     }
     if (!trimmed) return;
-    safeStorage.set(STORAGE_KEY_API, trimmed);
-    setApiKey(trimmed);
+    safeStorage.set(provider === 'venice' ? STORAGE_KEY_VENICE_API : STORAGE_KEY_API, trimmed);
+    setApiKeys((current) => ({ ...current, [provider]: trimmed }));
     setKeyDraft('');
     setKeyGateOpen(false);
   };
@@ -1210,7 +1248,7 @@ export function Portal() {
 
         {!apiKey && (
           <button className="caption-cta" onClick={() => setKeyGateOpen(true)}>
-            add an OpenRouter key to open the portal →
+            connect an AI provider to open the portal →
           </button>
         )}
 
@@ -1369,6 +1407,11 @@ export function Portal() {
 
       {keyGateOpen && (
         <Settings
+          provider={provider}
+          onProviderChange={(next) => {
+            setKeyDraft('');
+            changeProvider(next);
+          }}
           draft={keyDraft}
           onDraftChange={setKeyDraft}
           onSaveKey={saveKey}

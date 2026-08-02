@@ -19,12 +19,22 @@ import {
   PROMPT_PLACEHOLDERS,
   validateTemplate,
 } from '../../lib/promptTemplate';
-import { VIDEO_MODELS, WIDE_FIELD_MODELS, verifyKey } from '../../lib/openrouter';
 import type { KeyStatus, ModelSelection } from '../../lib/openrouter';
+import {
+  PROVIDERS,
+  keyUrlFor,
+  providerLabel,
+  stillModelsFor,
+  verifyProviderKey,
+  videoModelsFor,
+} from '../../lib/provider';
+import type { ProviderId } from '../../lib/provider';
 import { explainFailure } from '../../lib/failure';
 import type { Failure } from '../../lib/failure';
 
 interface Props {
+  provider: ProviderId;
+  onProviderChange: (provider: ProviderId) => void;
   onSaveKey: (key: string) => void;
   onDismiss: () => void;
   draft: string;
@@ -108,6 +118,8 @@ const FOCUSABLE =
   'a[href], button:not([disabled]), input:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
 export function Settings({
+  provider,
+  onProviderChange,
   onSaveKey,
   onDismiss,
   draft,
@@ -134,7 +146,7 @@ export function Settings({
   const templateError = validateTemplate(template);
 
   /**
-   * Check the key against OpenRouter's own /key endpoint, which costs nothing.
+   * Check the key against the active provider's free account endpoint.
    * Without this the first thing a wrong key does is waste a place, a year, a
    * lever pull and a minute of tunnel before admitting it was never going to
    * work — and a key that is merely EMPTY looked identical to one that was
@@ -147,21 +159,29 @@ export function Settings({
     setKeyStatus(null);
     setKeyFailure(null);
     try {
-      setKeyStatus(await verifyKey(key));
+      setKeyStatus(await verifyProviderKey(provider, key));
     } catch (err) {
-      setKeyFailure(explainFailure(err));
+      setKeyFailure(explainFailure(err, provider));
     } finally {
       setChecking(false);
     }
-  }, []);
+  }, [provider]);
 
   /** Shape check, instant and offline — the commonest paste error of all. */
   const shapeWarning =
-    draft.trim() && !draft.trim().startsWith('sk-or-')
+    provider === 'openrouter' && draft.trim() && !draft.trim().startsWith('sk-or-')
       ? draft.trim().startsWith('sk-')
         ? 'That looks like an OpenAI key. OpenRouter keys begin with sk-or-.'
         : 'OpenRouter keys begin with sk-or-. Check you copied the whole thing.'
       : null;
+
+  const stillModels = stillModelsFor(provider);
+  const videoModels = videoModelsFor(provider);
+
+  useEffect(() => {
+    setKeyStatus(null);
+    setKeyFailure(null);
+  }, [provider]);
 
   useEffect(() => {
     returnTo.current = document.activeElement as HTMLElement | null;
@@ -220,13 +240,22 @@ export function Settings({
             meta-prompt editor open this content is taller than most laptops, and
             previously "done" simply fell off the bottom of the screen. */}
         <div className="gate-body">
+        <ModelChoice
+          title="Provider"
+          hint="where generation runs"
+          options={PROVIDERS}
+          value={provider}
+          onChange={(id) => onProviderChange(id as ProviderId)}
+        />
+
         <p>
-          The portal generates every frame through OpenRouter. Your key is stored in this
-          browser&apos;s <code>localStorage</code> and goes nowhere else.
+          The portal generates every frame through {providerLabel(provider)}. Your key is
+          stored in this browser&apos;s <code>localStorage</code> and is sent only to that
+          provider.
         </p>
 
         <label className="field-label" htmlFor="set-key">
-          OpenRouter API key
+          {providerLabel(provider)} API key
         </label>
         <input
           id="set-key"
@@ -237,7 +266,7 @@ export function Settings({
           onKeyDown={(e) => {
             if (e.key === 'Enter') onSaveKey(draft);
           }}
-          placeholder={hasKey ? '•••••••• (saved) — type to replace' : 'sk-or-…'}
+          placeholder={hasKey ? '•••••••• (saved) — type to replace' : provider === 'openrouter' ? 'sk-or-…' : 'VENICE_INFERENCE_KEY...'}
         />
 
         <div className="key-check">
@@ -258,8 +287,9 @@ export function Settings({
           {keyStatus && (
             <span className="key-verdict key-verdict--ok">
               Key works
-              {keyStatus.remaining !== undefined ?
-                ` — $${keyStatus.remaining.toFixed(2)} left${keyStatus.resets ? ` this ${keyStatus.resets.replace(/ly$/, '')}` : ''}`
+              {keyStatus.canConsume === false ? ' — no usable balance'
+              : keyStatus.remaining !== undefined ?
+                ` — ${keyStatus.currency === 'DIEM' ? '' : '$'}${keyStatus.remaining.toFixed(2)}${keyStatus.currency === 'DIEM' ? ' DIEM' : ''} left${keyStatus.resets ? ` this ${keyStatus.resets.replace(/ly$/, '')}` : ''}`
               : keyStatus.freeTier ? ' — free tier, tight rate limits'
               : ' — no spending cap set'}
             </span>
@@ -279,7 +309,7 @@ export function Settings({
         <ModelChoice
           title="Stills"
           hint="what draws every frame"
-          options={WIDE_FIELD_MODELS}
+          options={stillModels}
           value={models.wideField}
           onChange={(id) => onModelsChange({ ...models, wideField: id })}
         />
@@ -293,12 +323,20 @@ export function Settings({
              radiogroup with NOTHING selected and no way to see what is in use —
              so the current selection is always one of the options. */
           options={
-            VIDEO_MODELS.slice(0, 5).some((m) => m.id === models.cinematic) ?
-              VIDEO_MODELS.slice(0, 5)
-            : [...VIDEO_MODELS.slice(0, 5), ...VIDEO_MODELS.filter((m) => m.id === models.cinematic)]
+            videoModels.slice(0, 5).some((m) => m.id === models.cinematic) ?
+              videoModels.slice(0, 5)
+            : [...videoModels.slice(0, 5), ...videoModels.filter((m) => m.id === models.cinematic)]
           }
           value={models.cinematic}
-          onChange={(id) => onModelsChange({ ...models, cinematic: id, animate: id })}
+          onChange={(id) => {
+            const option = videoModels.find((model) => model.id === id);
+            onModelsChange({
+              ...models,
+              cinematic: id,
+              cinematicText: option?.textModelId ?? id,
+              animate: id,
+            });
+          }}
         />
 
         <label className="field-label" htmlFor="set-custom">
@@ -392,7 +430,7 @@ export function Settings({
         </div>
 
         <div className="gate-actions">
-          <a href="https://openrouter.ai/keys" target="_blank" rel="noreferrer">
+          <a href={keyUrlFor(provider)} target="_blank" rel="noreferrer">
             get a key ↗
           </a>
           <div>
