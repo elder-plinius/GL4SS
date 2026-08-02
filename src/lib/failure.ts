@@ -100,21 +100,6 @@ export function explainFailure(err: unknown, provider: ProviderId = 'openrouter'
     };
   }
 
-  if (
-    provider === 'venice' &&
-    status === 401 &&
-    /PRO_ONLY_MODEL|only available to pro users/i.test(raw)
-  ) {
-    return {
-      kind: 'no-model',
-      title: 'That Venice model needs a Pro account.',
-      detail:
-        'Your key may be valid, but this model is restricted to Venice Pro. Pick a different model in Settings or upgrade the account.',
-      retry: false,
-      action: { label: 'open settings', openSettings: true },
-    };
-  }
-
   if (provider === 'venice' && status === 422) {
     return {
       kind: 'moderation',
